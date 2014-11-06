@@ -9,6 +9,7 @@ Gem::Specification.new do |spec|
   spec.authors       = ["Oliver Letterer"]
   spec.email         = ["oliver.letterer@gmail.com"]
   spec.summary       = %q{Build and submit ios projects to iTunes Connect}
+  spec.description   = %q{CocoaPods plugin that let's you build and submit builds to iTunes Connect, thanks to nomad/Shenzhen.}
   spec.homepage      = "https://github.com/Sparrow-Labs/cocoapods-submit"
   spec.license       = "MIT"
 
