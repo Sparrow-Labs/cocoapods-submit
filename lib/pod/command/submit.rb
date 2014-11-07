@@ -12,11 +12,11 @@ module Pod
       end
 
       self.arguments = [
-        CLAide::Argument.new('target', false),
+        CLAide::Argument.new('target_name', false),
       ]
 
       def initialize(argv)
-        @target = argv.shift_argument unless argv.arguments.empty?
+        @target_name = argv.shift_argument unless argv.arguments.empty?
         super
       end
 
@@ -78,35 +78,49 @@ module Pod
 
         # TODO: choose correct build configuration based on selected provioning profile for AppStore
         targets = project.targets.select { |t| t.product_type == "com.apple.product-type.application" }
+        if @target_name
+          targets = targets.select { |t| t.name == @target_name }
+          abort "Target #{@target_name} not found" if targets.count == 0
+        end
 
-        # TODO: abort for multiple application targets
-        @target = targets.first.name
+        if targets.count > 1
+          puts "Could not auto determine the target to submit. Please specify your target like:"
+          puts ""
+          for target in targets
+            puts "  * pod submit #{target.name}"
+          end
+          puts ""
+          abort
+        end
+
+        @target = targets.first
+        @target_name = @target.name
 
         # grap info.plist and extract bundle identifier
-        relative_info_path = targets.first.build_configuration_list["Release"].build_settings["INFOPLIST_FILE"]
+        relative_info_path = @target.build_configuration_list["Release"].build_settings["INFOPLIST_FILE"]
         info_path = File.join File.dirname(project.path), relative_info_path
         identifier = Plist::parse_xml(info_path)["CFBundleIdentifier"]
 
         username, password, apple_id = credentials(identifier)
 
-        execute "ipa build --verbose --scheme #{@target} --configuration AppStore | xcpretty -c && exit ${PIPESTATUS[0]}"
-        execute "ipa info #{@target}.ipa"
+        execute "ipa build --verbose --scheme #{@target_name} --configuration AppStore | xcpretty -c && exit ${PIPESTATUS[0]}"
+        execute "ipa info #{@target_name}.ipa"
 
         transporter = File.join `xcode-select --print-path`.chomp, "/../Applications/Application\\ Loader.app/Contents/MacOS/itms/bin/iTMSTransporter"
 
-        create_package(@target, apple_id)
+        create_package(@target_name, apple_id)
         execute "#{transporter} -m verify -f Package.itmsp -u #{username} -p #{password}"
         execute "#{transporter} -m upload -f Package.itmsp -u #{username} -p #{password}"
-        `rm -rf Package.itmsp #{@target}.ipa #{@target}.app.dSYM.zip`
+        `rm -rf Package.itmsp #{@target_name}.ipa #{@target_name}.app.dSYM.zip`
       end
 
-      def metadata(username, checksum, size)
+      def metadata(apple_id, checksum, size)
         %Q(<?xml version="1.0" encoding="UTF-8"?>
 <package version="software4.7" xmlns="http://apple.com/itunes/importer">
-  <software_assets apple_id="#{username}">
+  <software_assets apple_id="#{apple_id}">
     <asset type="bundle">
       <data_file>
-        <file_name>#{@target}.ipa</file_name>
+        <file_name>#{@target_name}.ipa</file_name>
         <checksum type="md5">#{checksum}</checksum>
         <size>#{size}</size>
       </data_file>
