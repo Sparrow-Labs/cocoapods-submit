@@ -21,41 +21,49 @@ module Pod
       end
 
       def login(bundle_identifier)
-        puts "You will now have to login to iTunes Connect. Don't worry. Your credentials will be securly stored in Your keychain."
-        print "Apple-ID: "
-        apple_id = $stdin.gets.chomp
-        abort "Apple-ID is required" if apple_id.empty?
+        puts "You will now have to login to iTunes Connect. Don't worry. Your credentials will be securly stored in your keychain."
+        print "Username: "
+        username = $stdin.gets.chomp
+        abort "Username is required" if username.empty?
 
-        print "Password for #{apple_id}: "
+        print "Password for #{username}: "
         password = STDIN.noecho(&:gets).chomp
         abort "Password is required" if password.empty?
         puts ""
 
-        `security add-generic-password -a #{bundle_identifier}.cocoapods-submit.apple-id -s #{bundle_identifier}.cocoapods-submit.apple-id -w #{apple_id}`
-        `security add-generic-password -a #{bundle_identifier}.cocoapods-submit.password -s #{bundle_identifier}.cocoapods-submit.password -w #{password}`
+        print "Apple-ID for #{bundle_identifier} (you can find it in iTunes Connect): "
+        apple_id = $stdin.gets.chomp
+        abort "Apple-ID is required" if apple_id.empty?
 
-        return [apple_id, password]
+        `security add-generic-password -a #{bundle_identifier}.cocoapods-submit.username -s #{bundle_identifier}.cocoapods-submit.username -w #{username}`
+        `security add-generic-password -a #{bundle_identifier}.cocoapods-submit.password -s #{bundle_identifier}.cocoapods-submit.password -w #{password}`
+        `security add-generic-password -a #{bundle_identifier}.cocoapods-submit.apple-id -s #{bundle_identifier}.cocoapods-submit.apple-id -w #{apple_id}`
+
+        return [username, password, apple_id]
       end
 
       def credentials(bundle_identifier)
-        apple_id = `security find-generic-password -wl #{bundle_identifier}.cocoapods-submit.apple-id`.chomp
+        username = `security find-generic-password -wl #{bundle_identifier}.cocoapods-submit.username`.chomp
         return login(bundle_identifier) if $?.to_i > 0
 
         password = `security find-generic-password -wl #{bundle_identifier}.cocoapods-submit.password`.chomp
         return login(bundle_identifier) if $?.to_i > 0
 
-        return [apple_id, password]
+        apple_id = `security find-generic-password -wl #{bundle_identifier}.cocoapods-submit.apple-id`.chomp
+        return login(bundle_identifier) if $?.to_i > 0
+
+        return [username, password, apple_id]
       end
 
-      def create_package
-        ipa = "#{@target}.ipa"
+      def create_package(target, apple_id)
+        ipa = "#{target}.ipa"
         size = File.size(ipa)
         checksum = Digest::MD5.file(ipa)
 
         FileUtils.mkdir_p("Package.itmsp")
         FileUtils.copy_entry(ipa, "Package.itmsp/#{ipa}")
 
-        File.write("Package.itmsp/metadata.xml", metadata("722772372", checksum, size))
+        File.write("Package.itmsp/metadata.xml", metadata(apple_id, checksum, size))
       end
 
       def run
@@ -72,7 +80,6 @@ module Pod
         targets = project.targets.select { |t| t.product_type == "com.apple.product-type.application" }
 
         # TODO: abort for multiple application targets
-        # TODO: abort if scheme is not found
         @target = targets.first.name
 
         # grap info.plist and extract bundle identifier
@@ -80,23 +87,23 @@ module Pod
         info_path = File.join File.dirname(project.path), relative_info_path
         identifier = Plist::parse_xml(info_path)["CFBundleIdentifier"]
 
-        apple_id, password = credentials(identifier)
+        username, password, apple_id = credentials(identifier)
 
         execute "ipa build --verbose --scheme #{@target} --configuration AppStore | xcpretty -c && exit ${PIPESTATUS[0]}"
         execute "ipa info #{@target}.ipa"
 
         transporter = File.join `xcode-select --print-path`.chomp, "/../Applications/Application\\ Loader.app/Contents/MacOS/itms/bin/iTMSTransporter"
 
-        create_package
-        execute "#{transporter} -m verify -f Package.itmsp -u #{apple_id} -p #{password}"
-        execute "#{transporter} -m upload -f Package.itmsp -u #{apple_id} -p #{password}"
+        create_package(@target, apple_id)
+        execute "#{transporter} -m verify -f Package.itmsp -u #{username} -p #{password}"
+        execute "#{transporter} -m upload -f Package.itmsp -u #{username} -p #{password}"
         `rm -rf Package.itmsp #{@target}.ipa #{@target}.app.dSYM.zip`
       end
 
-      def metadata(apple_id, checksum, size)
+      def metadata(username, checksum, size)
         %Q(<?xml version="1.0" encoding="UTF-8"?>
 <package version="software4.7" xmlns="http://apple.com/itunes/importer">
-  <software_assets apple_id="#{apple_id}">
+  <software_assets apple_id="#{username}">
     <asset type="bundle">
       <data_file>
         <file_name>#{@target}.ipa</file_name>
