@@ -1,5 +1,6 @@
 require 'plist'
 require 'io/console'
+require 'provisioning_profile'
 
 module Pod
   class Command
@@ -66,46 +67,12 @@ module Pod
         File.write("Package.itmsp/metadata.xml", metadata(apple_id, checksum, size))
       end
 
-      def rank_profile(profile)
-        return 0.0 unless profile
-
-        rank = 1.0
-        rank *= 0.0 if profile["Entitlements"]["get-task-allow"]
-        rank *= 1.0 / profile["ProvisionedDevices"].count if profile["ProvisionedDevices"]
-
-        return rank
-      end
-
-      def find_app_store_configuration(target)
-        best_profile = nil
-
+      def find_best_configuration(target)
         identifiers = target.build_configurations.map { |c| c.build_settings["PROVISIONING_PROFILE"] }
-        puts identifiers
-        return nil
+        profiles = identifiers.map { |uuid| CocoapodsSubmit::ProvisioningProfile.from_uuid uuid }
+        ranks = profiles.map &:rank
 
-        for configuration in target.build_configurations
-          identifier = configuration.build_settings["PROVISIONING_PROFILE"]
-          next if identifier.empty?
-
-          path = File.expand_path File.join "~/Library/MobileDevice/Provisioning Profiles", "#{identifier}.mobileprovision"
-          next unless File.exists? File.expand_path(path)
-
-          start_string = "<?"
-          end_string = "</plist>"
-
-          profile = File.read(path)
-          profile = profile.slice(profile.index(start_string), profile.length)
-          profile = profile.slice(0, profile.index(end_string) + end_string.length)
-          profile = Plist::parse_xml(profile)
-
-          puts "#{configuration.name} => #{path} => #{rank_profile profile}"
-
-          if rank_profile(profile) > rank_profile(best_profile)
-            best_profile = profile
-          end
-        end
-
-        return best_profile
+        return target.build_configurations[ranks.each_with_index.max[1]]
       end
 
       def run
@@ -137,10 +104,8 @@ module Pod
         @target = targets.first
         @target_name = @target.name
 
-        configuration = find_app_store_configuration @target
-
-        puts @target.build_configurations[0].class
-        exit -1
+        configuration = find_best_configuration @target
+        abort "No build configuration found for target #{@target}." unless configuration
 
         # grap info.plist and extract bundle identifier
         relative_info_path = @target.build_configuration_list["Release"].build_settings["INFOPLIST_FILE"]
@@ -149,7 +114,7 @@ module Pod
 
         username, password, apple_id = credentials(identifier)
 
-        execute "ipa build --verbose --scheme #{@target_name} --configuration AppStore | xcpretty -c && exit ${PIPESTATUS[0]}"
+        execute "ipa build --verbose --scheme #{@target_name} --configuration #{configuration.name} | xcpretty -c && exit ${PIPESTATUS[0]}"
         execute "ipa info #{@target_name}.ipa"
 
         transporter = File.join `xcode-select --print-path`.chomp, "/../Applications/Application\\ Loader.app/Contents/MacOS/itms/bin/iTMSTransporter"
