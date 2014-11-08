@@ -66,6 +66,48 @@ module Pod
         File.write("Package.itmsp/metadata.xml", metadata(apple_id, checksum, size))
       end
 
+      def rank_profile(profile)
+        return 0.0 unless profile
+
+        rank = 1.0
+        rank *= 0.0 if profile["Entitlements"]["get-task-allow"]
+        rank *= 1.0 / profile["ProvisionedDevices"].count if profile["ProvisionedDevices"]
+
+        return rank
+      end
+
+      def find_app_store_configuration(target)
+        best_profile = nil
+
+        identifiers = target.build_configurations.map { |c| c.build_settings["PROVISIONING_PROFILE"] }
+        puts identifiers
+        return nil
+
+        for configuration in target.build_configurations
+          identifier = configuration.build_settings["PROVISIONING_PROFILE"]
+          next if identifier.empty?
+
+          path = File.expand_path File.join "~/Library/MobileDevice/Provisioning Profiles", "#{identifier}.mobileprovision"
+          next unless File.exists? File.expand_path(path)
+
+          start_string = "<?"
+          end_string = "</plist>"
+
+          profile = File.read(path)
+          profile = profile.slice(profile.index(start_string), profile.length)
+          profile = profile.slice(0, profile.index(end_string) + end_string.length)
+          profile = Plist::parse_xml(profile)
+
+          puts "#{configuration.name} => #{path} => #{rank_profile profile}"
+
+          if rank_profile(profile) > rank_profile(best_profile)
+            best_profile = profile
+          end
+        end
+
+        return best_profile
+      end
+
       def run
         workspaces = Dir.entries(".").select { |s| s.end_with? ".xcworkspace" }
         abort "pod submit only supports one .xcworkspace in the current directory" unless workspaces.count == 1
@@ -76,7 +118,6 @@ module Pod
 
         # TODO: inject build phase to increment build number
 
-        # TODO: choose correct build configuration based on selected provioning profile for AppStore
         targets = project.targets.select { |t| t.product_type == "com.apple.product-type.application" }
         if @target_name
           targets = targets.select { |t| t.name == @target_name }
@@ -95,6 +136,11 @@ module Pod
 
         @target = targets.first
         @target_name = @target.name
+
+        configuration = find_app_store_configuration @target
+
+        puts @target.build_configurations[0].class
+        exit -1
 
         # grap info.plist and extract bundle identifier
         relative_info_path = @target.build_configuration_list["Release"].build_settings["INFOPLIST_FILE"]
