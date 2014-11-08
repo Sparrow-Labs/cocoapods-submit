@@ -1,6 +1,7 @@
 require 'plist'
 require 'io/console'
 require 'provisioning_profile'
+require 'time'
 
 module Pod
   class Command
@@ -125,7 +126,11 @@ module Pod
         execute "#{transporter} -m upload -f Package.itmsp -u #{username} -p #{password}"
         `rm -rf Package.itmsp #{@target_name}.ipa #{@target_name}.app.dSYM.zip`
 
-        # TODO: commit and tag release
+        time = Time.now.iso8601
+        execute "git add ."
+        execute "git commit -am 'Submitted to iTunes Connect submit-#{time}-#{@target.name}-#{info_plist["CFBundleShortVersionString"]}-#{info_plist["CFBundleVersion"]}'"
+        execute "git tag submit-#{time}-#{@target.name}-#{info_plist["CFBundleShortVersionString"]}-#{info_plist["CFBundleVersion"]}"
+        execute "git push && git push --tags"
       end
 
       def metadata(apple_id, checksum, size)
