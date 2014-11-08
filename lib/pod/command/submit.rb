@@ -83,8 +83,6 @@ module Pod
         project = Xcodeproj::Project.open workspace.file_references.first.path
         schemes = Xcodeproj::Project.schemes project.path
 
-        # TODO: inject build phase to increment build number
-
         targets = project.targets.select { |t| t.product_type == "com.apple.product-type.application" }
         if @target_name
           targets = targets.select { |t| t.name == @target_name }
@@ -110,7 +108,10 @@ module Pod
         # grap info.plist and extract bundle identifier
         relative_info_path = @target.build_configuration_list["Release"].build_settings["INFOPLIST_FILE"]
         info_path = File.join File.dirname(project.path), relative_info_path
-        identifier = Plist::parse_xml(info_path)["CFBundleIdentifier"]
+        info_plist = Plist::parse_xml(info_path)
+        identifier = info_plist["CFBundleIdentifier"]
+        info_plist["CFBundleVersion"] = (info_plist["CFBundleVersion"].to_i + 1).to_s
+        File.write info_path, info_plist.to_plist
 
         username, password, apple_id = credentials(identifier)
 
@@ -123,6 +124,8 @@ module Pod
         execute "#{transporter} -m verify -f Package.itmsp -u #{username} -p #{password}"
         execute "#{transporter} -m upload -f Package.itmsp -u #{username} -p #{password}"
         `rm -rf Package.itmsp #{@target_name}.ipa #{@target_name}.app.dSYM.zip`
+
+        # TODO: commit and tag release
       end
 
       def metadata(apple_id, checksum, size)
