@@ -1,7 +1,9 @@
 require 'plist'
 require 'io/console'
-require 'provisioning_profile'
 require 'time'
+
+require 'cocoapods_submit/provisioning_profile'
+require 'cocoapods_submit/build_configuration'
 
 module Pod
   class Command
@@ -102,6 +104,7 @@ module Pod
 
         @target = targets.first
         @target_name = @target.name
+        build_config = CocoapodsSubmit::BuildConfiguration.new @target
 
         configuration = find_best_configuration @target
         abort "No build configuration found for target #{@target}." unless configuration
