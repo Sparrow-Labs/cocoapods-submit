@@ -5,21 +5,26 @@ require 'fileutils'
 module CocoapodsSubmit
   class IPAUploader
     attr_reader :ipa
+    attr_reader :bundle_identifier
 
-    def initialize(ipa)
+    def initialize(ipa, bundle_identifier)
       @directory = File.join "/tmp", SecureRandom.uuid
-      FileUtils::mkdir_p @directory
-
       @ipa = ipa
+      @bundle_identifier = bundle_identifier
     end
 
     def upload
-      username, password, apple_id = credentials(ipa_builder.bundle_identifier)
+      FileUtils::mkdir_p @directory
+
+      username, password, apple_id = credentials(bundle_identifier)
 
       transporter = File.join `xcode-select --print-path`.chomp, "/../Applications/Application\\ Loader.app/Contents/MacOS/itms/bin/iTMSTransporter"
 
       package = create_package(apple_id)
       execute %{#{transporter} -m verify -f "#{package}" -u "#{username}" -p "#{password}"}
+      execute %{#{transporter} -m upload -f "#{package}" -u "#{username}" -p "#{password}"}
+
+      `rm -rf "#{@directory}"`
     end
 
     private
@@ -30,8 +35,11 @@ module CocoapodsSubmit
       package = File.join @directory, "Package.itmsp"
       FileUtils.mkdir_p(package)
 
-      FileUtils.copy_entry(ipa, "Package.itmsp/#{File.basename ipa}")
-      File.write("Package.itmsp/metadata.xml", metadata(apple_id, checksum, size))
+      ipa_path = File.join(package, File.basename(ipa))
+      metadata_path = File.join(package, "metadata.xml")
+
+      FileUtils.copy_entry(ipa, ipa_path)
+      File.write(metadata_path, metadata(apple_id, checksum, size))
 
       package
     end

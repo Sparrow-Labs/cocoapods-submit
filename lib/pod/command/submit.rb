@@ -31,6 +31,14 @@ module Pod
         return target.build_configurations[ranks.each_with_index.max[1]]
       end
 
+      def tag_release
+        time = Time.now.strftime "%Y%m%d%H%m%S"
+        execute "git add ."
+        execute "git commit -am 'Submitted to iTunes Connect submit-#{time}-#{@target.name}-#{info_plist["CFBundleShortVersionString"]}-#{info_plist["CFBundleVersion"]}'"
+        execute "git tag submit-#{time}-#{@target.name}-#{info_plist["CFBundleShortVersionString"]}-#{info_plist["CFBundleVersion"]}"
+        execute "git push && git push --tags"
+      end
+
       def run
         workspaces = Dir.entries(".").select { |s| s.end_with? ".xcworkspace" }
         abort "pod submit only supports one .xcworkspace in the current directory" unless workspaces.count == 1
@@ -64,20 +72,11 @@ module Pod
         ipa_builder = CocoapodsSubmit::IPABuilder.new workspaces[0], targets.first, configuration
         path = ipa_builder.build_ipa
 
-        uploader = CocoapodsSubmit::IPAUploader path
+        uploader = CocoapodsSubmit::IPAUploader.new path, ipa_builder.bundle_identifier
         uploader.upload
-        exit -1
 
-
-
-        execute "#{transporter} -m upload -f Package.itmsp -u #{username} -p #{password}"
-        `rm -rf Package.itmsp #{@target_name}.ipa`
-
-        time = Time.now.strftime "%Y%m%d%H%m%S"
-        execute "git add ."
-        execute "git commit -am 'Submitted to iTunes Connect submit-#{time}-#{@target.name}-#{info_plist["CFBundleShortVersionString"]}-#{info_plist["CFBundleVersion"]}'"
-        execute "git tag submit-#{time}-#{@target.name}-#{info_plist["CFBundleShortVersionString"]}-#{info_plist["CFBundleVersion"]}"
-        execute "git push && git push --tags"
+        ipa_builder.cleanup
+        tag_release
       end
     end
   end

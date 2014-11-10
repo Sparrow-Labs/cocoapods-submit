@@ -12,7 +12,6 @@ module CocoapodsSubmit
 
     def initialize(workspace_path, target, configuration)
       @directory = File.join "/tmp", SecureRandom.uuid
-      # @directory = File.join "/tmp", "5b0ea150-774a-43cb-90fc-d910383890eb"
       FileUtils::mkdir_p @directory
 
       @workspace_path = workspace_path
@@ -33,6 +32,10 @@ module CocoapodsSubmit
       copy_app
       codesign
       package_ipa
+    end
+
+    def cleanup
+      `rm -rf "#{@directory}"`
     end
 
     private
