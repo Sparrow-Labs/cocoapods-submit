@@ -12,8 +12,6 @@ module CocoapodsSubmit
 
     def initialize(workspace_path, target, configuration)
       @directory = File.join "/tmp", SecureRandom.uuid
-      FileUtils::mkdir_p @directory
-
       @workspace_path = workspace_path
       @target = target
       @configuration = configuration
@@ -27,15 +25,19 @@ module CocoapodsSubmit
     end
 
     def build_ipa
+      FileUtils.mkdir_p @directory
+
       increment_bundle_version
       xcodebuild
       copy_app
-      codesign
-      package_ipa
-    end
+      # codesign
+      ipa_path = package_ipa
 
-    def cleanup
-      `rm -rf "#{@directory}"`
+      final_ipa_path = File.join ".", File.basename(ipa_path)
+      FileUtils.move ipa_path, final_ipa_path
+
+      FileUtils.rm_rf @directory
+      final_ipa_path
     end
 
     private
@@ -72,15 +74,17 @@ module CocoapodsSubmit
     private
     def root_directory
       root_directory = File.join @directory, "root"
-      FileUtils::mkdir_p root_directory
+      FileUtils.mkdir_p root_directory
       root_directory
     end
 
     private
     def copy_app
       app_path = File.join build_settings['BUILT_PRODUCTS_DIR'], build_settings['WRAPPER_NAME']
-      `mv #{app_path} #{root_directory} > /dev/null`
-      abort unless $?
+      dsym_path = app_path + ".dSYM"
+
+      FileUtils.cp_r app_path, root_directory
+      FileUtils.cp_r dsym_path, root_directory
     end
 
     private
@@ -114,9 +118,11 @@ module CocoapodsSubmit
     private
     def package_ipa
       app_path = File.join root_directory, build_settings['WRAPPER_NAME']
+      dsym_path = app_path + ".dSYM"
       ipa_path = File.join @directory, "#{@target.name}.ipa"
 
-      execute %{xcrun -sdk iphoneos PackageApplication -v "#{app_path}" -o "#{ipa_path}" > /dev/null}
+      execute %{xcrun -sdk iphoneos PackageApplication -v "#{app_path}" -o "#{ipa_path}" --embed "#{dsym_path}" > /dev/null}
+
       ipa_path
     end
   end

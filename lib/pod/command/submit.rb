@@ -75,7 +75,6 @@ module Pod
         uploader = CocoapodsSubmit::IPAUploader.new path, ipa_builder.bundle_identifier
         uploader.upload
 
-        ipa_builder.cleanup
         tag_release
       end
     end
