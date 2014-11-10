@@ -72,10 +72,26 @@ module Pod
 
       def find_best_configuration(target)
         identifiers = target.build_configurations.map { |c| c.build_settings["PROVISIONING_PROFILE"] }
-        profiles = identifiers.map { |uuid| CocoapodsSubmit::ProvisioningProfile.from_uuid uuid }
-        ranks = profiles.map &:rank
+        profiles = identifiers.map { |uuid| CocoapodsSubmit::ProvisioningProfile.new uuid }
+        abort "No build configuration for iTunes Connect releases found." if profiles.count == 0
 
+        ranks = profiles.map &:rank
         return target.build_configurations[ranks.each_with_index.max[1]]
+      end
+
+      def build(workspace_path, target, configuration)
+        flags = []
+        flags << %{-sdk iphoneos}
+        flags << %{-workspace "#{workspace_path}"}
+        flags << %{-scheme "#{target.name}"}
+        flags << %{-configuration "#{configuration.name}"}
+
+        actions = []
+        actions << :clean
+        actions << :build
+        actions << :archive
+
+        execute %{xcodebuild #{flags.join(" ")} #{actions.join(" ")} | xcpretty -c && exit ${PIPESTATUS[0]}}
       end
 
       def run
@@ -104,13 +120,12 @@ module Pod
 
         @target = targets.first
         @target_name = @target.name
-        build_config = CocoapodsSubmit::BuildConfiguration.new @target
 
         configuration = find_best_configuration @target
         abort "No build configuration found for target #{@target}." unless configuration
 
         # grap info.plist and extract bundle identifier
-        relative_info_path = @target.build_configuration_list["Release"].build_settings["INFOPLIST_FILE"]
+        relative_info_path = @target.build_configuration_list[configuration.name].build_settings["INFOPLIST_FILE"]
         info_path = File.join File.dirname(project.path), relative_info_path
         info_plist = Plist::parse_xml(info_path)
         identifier = info_plist["CFBundleIdentifier"]
@@ -119,15 +134,34 @@ module Pod
 
         username, password, apple_id = credentials(identifier)
 
-        execute "ipa build --verbose --scheme #{@target_name} --configuration #{configuration.name} | xcpretty -c && exit ${PIPESTATUS[0]}"
-        execute "ipa info #{@target_name}.ipa"
+        provisioning = CocoapodsSubmit::ProvisioningProfile.new configuration.build_settings["PROVISIONING_PROFILE"]
+        abort "cocoapods-submit only supports provisionings with a single signer identity" unless provisioning.signer_identities.count == 1
+        signer_identity = provisioning.signer_identities.first
+
+        build_settings = CocoapodsSubmit::BuildConfiguration.new workspaces[0], @target, configuration
+
+        # thanks @mattt: https://github.com/nomad/shenzhen
+        app_path = File.join build_settings['BUILT_PRODUCTS_DIR'], build_settings['WRAPPER_NAME']
+        frameworks_path = File.join app_path, "Frameworks"
+        dsym_path = app_path + ".dSYM"
+        ipa_name = build_settings['WRAPPER_NAME'].gsub(build_settings['WRAPPER_SUFFIX'], "") + ".ipa"
+        ipa_path = File.expand_path(ipa_name, ".")
+
+        build workspaces[0], @target, configuration
+        # execute %{codesign --force --verbose --sign "#{signer_identity}" #{app_path}}
+        execute %{codesign --force --verbose --sign "#{signer_identity}" #{frameworks_path}/*} if File.exists? frameworks_path
+
+        execute %{xcrun -sdk iphoneos PackageApplication -v "#{app_path}" -o "#{ipa_path}" --embed "#{dsym_path}" > /dev/null}
+        exit -1
+        # execute %{xcrun -sdk iphoneos PackageApplication -v "#{app_path}" -o "#{ipa_path}" --embed "#{provisioning.uuid}" --embed "#{dsym_path}" -s "#{signer_identity}" > /dev/null}
+        # execute %{xcrun -sdk iphoneos PackageApplication -v "#{app_path}" -o "#{ipa_path}" --embed "#{dsym_path}" > /dev/null}
 
         transporter = File.join `xcode-select --print-path`.chomp, "/../Applications/Application\\ Loader.app/Contents/MacOS/itms/bin/iTMSTransporter"
 
         create_package(@target_name, apple_id)
         execute "#{transporter} -m verify -f Package.itmsp -u #{username} -p #{password}"
         execute "#{transporter} -m upload -f Package.itmsp -u #{username} -p #{password}"
-        `rm -rf Package.itmsp #{@target_name}.ipa #{@target_name}.app.dSYM.zip`
+        `rm -rf Package.itmsp #{@target_name}.ipa`
 
         time = Time.now.strftime "%Y%m%d%H%m%S"
         execute "git add ."
